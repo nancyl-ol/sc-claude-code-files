@@ -1,249 +1,183 @@
 """
-Data loading and processing module for e-commerce data analysis.
+Data Loading and Processing Module
+
+This module handles loading and processing e-commerce data from CSV files.
+It includes functions for data cleaning, transformation, and filtering.
 """
 
 import pandas as pd
-import numpy as np
-from typing import Dict, Tuple, Optional
-import warnings
-
-warnings.filterwarnings('ignore')
+from typing import Optional, Tuple
 
 
-class EcommerceDataLoader:
+def load_raw_data(data_dir: str = 'ecommerce_data') -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    A class for loading and processing e-commerce data.
+    Load all raw e-commerce datasets from CSV files.
+
+    Parameters
+    ----------
+    data_dir : str, default='ecommerce_data'
+        Directory path containing the CSV files
+
+    Returns
+    -------
+    tuple of DataFrames
+        (orders, order_items, products, customers, reviews)
     """
-    
-    def __init__(self, data_path: str = 'ecommerce_data/'):
-        """
-        Initialize the data loader.
-        
-        Args:
-            data_path (str): Path to the directory containing CSV files
-        """
-        self.data_path = data_path
-        self.raw_data = {}
-        self.processed_data = {}
-    
-    def load_raw_data(self) -> Dict[str, pd.DataFrame]:
-        """
-        Load all raw CSV files into DataFrames.
-        
-        Returns:
-            Dict[str, pd.DataFrame]: Dictionary containing all raw datasets
-        """
-        file_mappings = {
-            'orders': 'orders_dataset.csv',
-            'order_items': 'order_items_dataset.csv',
-            'products': 'products_dataset.csv',
-            'customers': 'customers_dataset.csv',
-            'reviews': 'order_reviews_dataset.csv',
-            'payments': 'order_payments_dataset.csv'
-        }
-        
-        for key, filename in file_mappings.items():
-            try:
-                self.raw_data[key] = pd.read_csv(f"{self.data_path}{filename}")
-                print(f"Loaded {key}: {len(self.raw_data[key])} records")
-            except FileNotFoundError:
-                print(f"Warning: {filename} not found, skipping...")
-        
-        return self.raw_data
-    
-    def clean_orders_data(self) -> pd.DataFrame:
-        """
-        Clean and process orders data.
-        
-        Returns:
-            pd.DataFrame: Cleaned orders data
-        """
-        orders = self.raw_data['orders'].copy()
-        
-        # Convert timestamp columns to datetime
-        timestamp_cols = [
-            'order_purchase_timestamp',
-            'order_approved_at',
-            'order_delivered_carrier_date',
-            'order_delivered_customer_date',
-            'order_estimated_delivery_date'
-        ]
-        
-        for col in timestamp_cols:
-            if col in orders.columns:
-                orders[col] = pd.to_datetime(orders[col])
-        
-        # Extract date components
-        orders['purchase_year'] = orders['order_purchase_timestamp'].dt.year
-        orders['purchase_month'] = orders['order_purchase_timestamp'].dt.month
-        orders['purchase_date'] = orders['order_purchase_timestamp'].dt.date
-        
-        return orders
-    
-    def clean_order_items_data(self) -> pd.DataFrame:
-        """
-        Clean and process order items data.
-        
-        Returns:
-            pd.DataFrame: Cleaned order items data
-        """
-        order_items = self.raw_data['order_items'].copy()
-        
-        # Convert shipping limit date to datetime
-        if 'shipping_limit_date' in order_items.columns:
-            order_items['shipping_limit_date'] = pd.to_datetime(order_items['shipping_limit_date'])
-        
-        # Calculate total item value (price + freight)
-        order_items['total_item_value'] = order_items['price'] + order_items['freight_value']
-        
-        return order_items
-    
-    def clean_reviews_data(self) -> pd.DataFrame:
-        """
-        Clean and process reviews data.
-        
-        Returns:
-            pd.DataFrame: Cleaned reviews data
-        """
-        reviews = self.raw_data['reviews'].copy()
-        
-        # Convert review dates to datetime
-        date_cols = ['review_creation_date', 'review_answer_timestamp']
-        for col in date_cols:
-            if col in reviews.columns:
-                reviews[col] = pd.to_datetime(reviews[col])
-        
-        return reviews
-    
-    def create_sales_dataset(self, year_filter: Optional[int] = None, 
-                           month_filter: Optional[int] = None,
-                           status_filter: str = 'delivered') -> pd.DataFrame:
-        """
-        Create a comprehensive sales dataset by joining relevant tables.
-        
-        Args:
-            year_filter (int, optional): Filter by specific year
-            month_filter (int, optional): Filter by specific month
-            status_filter (str): Filter by order status (default: 'delivered')
-        
-        Returns:
-            pd.DataFrame: Comprehensive sales dataset
-        """
-        # Start with order items
-        sales_data = self.processed_data['order_items'].copy()
-        
-        # Join with orders
-        sales_data = sales_data.merge(
-            self.processed_data['orders'][['order_id', 'customer_id', 'order_status', 
-                                         'order_purchase_timestamp', 'order_delivered_customer_date',
-                                         'purchase_year', 'purchase_month']],
-            on='order_id',
-            how='left'
-        )
-        
-        # Filter by order status
-        if status_filter:
-            sales_data = sales_data[sales_data['order_status'] == status_filter]
-        
-        # Apply time filters
-        if year_filter:
-            sales_data = sales_data[sales_data['purchase_year'] == year_filter]
-        
-        if month_filter:
-            sales_data = sales_data[sales_data['purchase_month'] == month_filter]
-        
-        # Add product information
-        if 'products' in self.raw_data:
-            sales_data = sales_data.merge(
-                self.raw_data['products'][['product_id', 'product_category_name']],
-                on='product_id',
-                how='left'
-            )
-        
-        # Add customer information (avoid duplicate joins)
-        if 'customers' in self.raw_data and 'customer_id' in sales_data.columns:
-            sales_data = sales_data.merge(
-                self.raw_data['customers'][['customer_id', 'customer_state', 'customer_city']],
-                on='customer_id',
-                how='left'
-            )
-        
-        # Add review information
-        if 'reviews' in self.raw_data:
-            sales_data = sales_data.merge(
-                self.raw_data['reviews'][['order_id', 'review_score']],
-                on='order_id',
-                how='left'
-            )
-        
-        # Calculate delivery metrics
-        if 'order_delivered_customer_date' in sales_data.columns and 'order_purchase_timestamp' in sales_data.columns:
-            sales_data['delivery_days'] = (
-                sales_data['order_delivered_customer_date'] - 
-                sales_data['order_purchase_timestamp']
-            ).dt.days
-        
-        return sales_data
-    
-    def process_all_data(self) -> Dict[str, pd.DataFrame]:
-        """
-        Process all loaded data.
-        
-        Returns:
-            Dict[str, pd.DataFrame]: Dictionary containing all processed datasets
-        """
-        if not self.raw_data:
-            self.load_raw_data()
-        
-        # Process each dataset
-        self.processed_data['orders'] = self.clean_orders_data()
-        self.processed_data['order_items'] = self.clean_order_items_data()
-        
-        if 'reviews' in self.raw_data:
-            self.processed_data['reviews'] = self.clean_reviews_data()
-        
-        return self.processed_data
-    
-    def get_data_summary(self) -> Dict[str, Dict]:
-        """
-        Get summary statistics for all datasets.
-        
-        Returns:
-            Dict[str, Dict]: Summary statistics for each dataset
-        """
-        summary = {}
-        
-        for name, df in self.processed_data.items():
-            summary[name] = {
-                'rows': len(df),
-                'columns': len(df.columns),
-                'memory_usage_mb': df.memory_usage(deep=True).sum() / 1024**2,
-                'date_range': None
-            }
-            
-            # Add date range for orders
-            if name == 'orders' and 'order_purchase_timestamp' in df.columns:
-                summary[name]['date_range'] = {
-                    'start': df['order_purchase_timestamp'].min(),
-                    'end': df['order_purchase_timestamp'].max()
-                }
-        
-        return summary
+    orders = pd.read_csv(f'{data_dir}/orders_dataset.csv')
+    order_items = pd.read_csv(f'{data_dir}/order_items_dataset.csv')
+    products = pd.read_csv(f'{data_dir}/products_dataset.csv')
+    customers = pd.read_csv(f'{data_dir}/customers_dataset.csv')
+    reviews = pd.read_csv(f'{data_dir}/order_reviews_dataset.csv')
+
+    return orders, order_items, products, customers, reviews
 
 
-def categorize_delivery_speed(days: float) -> str:
+def create_sales_dataset(orders: pd.DataFrame, order_items: pd.DataFrame) -> pd.DataFrame:
     """
-    Categorize delivery speed based on number of days.
-    
-    Args:
-        days (float): Number of delivery days
-    
-    Returns:
-        str: Delivery speed category
+    Create a combined sales dataset by merging orders and order items.
+
+    Parameters
+    ----------
+    orders : DataFrame
+        Orders dataset containing order information
+    order_items : DataFrame
+        Order items dataset containing product and pricing information
+
+    Returns
+    -------
+    DataFrame
+        Merged sales dataset with order and item details
     """
-    if pd.isna(days):
-        return 'Unknown'
-    elif days <= 3:
+    sales_data = pd.merge(
+        left=order_items[['order_id', 'order_item_id', 'product_id', 'price']],
+        right=orders[['order_id', 'order_status', 'order_purchase_timestamp', 'order_delivered_customer_date']],
+        on='order_id'
+    )
+
+    return sales_data
+
+
+def filter_delivered_orders(sales_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filter sales data to include only delivered orders.
+
+    Parameters
+    ----------
+    sales_data : DataFrame
+        Combined sales dataset
+
+    Returns
+    -------
+    DataFrame
+        Sales data filtered to delivered orders only
+    """
+    sales_delivered = sales_data[sales_data['order_status'] == 'delivered'].copy()
+
+    return sales_delivered
+
+
+def add_temporal_columns(sales_delivered: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add temporal columns (month, year) to the sales dataset.
+
+    Parameters
+    ----------
+    sales_delivered : DataFrame
+        Sales data with delivered orders
+
+    Returns
+    -------
+    DataFrame
+        Sales data with added temporal columns
+    """
+    df = sales_delivered.copy()
+
+    # Convert timestamp to datetime
+    df['order_purchase_timestamp'] = pd.to_datetime(df['order_purchase_timestamp'])
+
+    # Extract month and year
+    df['month'] = df['order_purchase_timestamp'].dt.month
+    df['year'] = df['order_purchase_timestamp'].dt.year
+
+    return df
+
+
+def filter_by_date_range(
+    sales_data: pd.DataFrame,
+    year: Optional[int] = None,
+    month: Optional[int] = None
+) -> pd.DataFrame:
+    """
+    Filter sales data by year and optionally by month.
+
+    Parameters
+    ----------
+    sales_data : DataFrame
+        Sales dataset with temporal columns
+    year : int, optional
+        Year to filter by
+    month : int, optional
+        Month to filter by (1-12). Only used if year is also specified.
+
+    Returns
+    -------
+    DataFrame
+        Filtered sales data
+    """
+    df = sales_data.copy()
+
+    if year is not None:
+        df = df[df['year'] == year]
+
+    if month is not None and year is not None:
+        df = df[df['month'] == month]
+
+    return df
+
+
+def add_delivery_metrics(sales_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add delivery-related metrics to the sales dataset.
+
+    Parameters
+    ----------
+    sales_data : DataFrame
+        Sales dataset with order timestamps
+
+    Returns
+    -------
+    DataFrame
+        Sales data with delivery metrics added
+    """
+    df = sales_data.copy()
+
+    # Ensure datetime columns
+    df['order_delivered_customer_date'] = pd.to_datetime(df['order_delivered_customer_date'])
+    df['order_purchase_timestamp'] = pd.to_datetime(df['order_purchase_timestamp'])
+
+    # Calculate delivery speed in days
+    df['delivery_speed'] = (
+        df['order_delivered_customer_date'] - df['order_purchase_timestamp']
+    ).dt.days
+
+    return df
+
+
+def categorize_delivery_speed(days: int) -> str:
+    """
+    Categorize delivery speed into time ranges.
+
+    Parameters
+    ----------
+    days : int
+        Number of days for delivery
+
+    Returns
+    -------
+    str
+        Delivery time category
+    """
+    if days <= 3:
         return '1-3 days'
     elif days <= 7:
         return '4-7 days'
@@ -251,18 +185,74 @@ def categorize_delivery_speed(days: float) -> str:
         return '8+ days'
 
 
-def load_and_process_data(data_path: str = 'ecommerce_data/') -> Tuple[EcommerceDataLoader, Dict[str, pd.DataFrame]]:
+def add_delivery_categories(sales_data: pd.DataFrame) -> pd.DataFrame:
     """
-    Convenience function to load and process all data.
-    
-    Args:
-        data_path (str): Path to data directory
-    
-    Returns:
-        Tuple[EcommerceDataLoader, Dict[str, pd.DataFrame]]: Loader instance and processed data
+    Add categorized delivery time column to the dataset.
+
+    Parameters
+    ----------
+    sales_data : DataFrame
+        Sales dataset with delivery_speed column
+
+    Returns
+    -------
+    DataFrame
+        Sales data with delivery_time category added
     """
-    loader = EcommerceDataLoader(data_path)
-    loader.load_raw_data()
-    processed_data = loader.process_all_data()
-    
-    return loader, processed_data
+    df = sales_data.copy()
+    df['delivery_time'] = df['delivery_speed'].apply(categorize_delivery_speed)
+
+    return df
+
+
+def prepare_sales_data(
+    data_dir: str = 'ecommerce_data',
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    include_delivery_metrics: bool = True
+) -> pd.DataFrame:
+    """
+    Complete pipeline to load, process, and prepare sales data.
+
+    This is the main function to use for data preparation. It loads raw data,
+    filters for delivered orders, adds temporal columns, filters by date range,
+    and optionally adds delivery metrics.
+
+    Parameters
+    ----------
+    data_dir : str, default='ecommerce_data'
+        Directory containing CSV files
+    year : int, optional
+        Year to filter data by
+    month : int, optional
+        Month to filter data by (requires year)
+    include_delivery_metrics : bool, default=True
+        Whether to include delivery speed metrics
+
+    Returns
+    -------
+    DataFrame
+        Processed sales dataset ready for analysis
+    """
+    # Load raw data
+    orders, order_items, _, _, _ = load_raw_data(data_dir)
+
+    # Create sales dataset
+    sales_data = create_sales_dataset(orders, order_items)
+
+    # Filter to delivered orders
+    sales_delivered = filter_delivered_orders(sales_data)
+
+    # Add temporal columns
+    sales_delivered = add_temporal_columns(sales_delivered)
+
+    # Filter by date range if specified
+    if year is not None:
+        sales_delivered = filter_by_date_range(sales_delivered, year, month)
+
+    # Add delivery metrics if requested
+    if include_delivery_metrics:
+        sales_delivered = add_delivery_metrics(sales_delivered)
+        sales_delivered = add_delivery_categories(sales_delivered)
+
+    return sales_delivered
